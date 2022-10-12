@@ -1,0 +1,296 @@
+---
+title: "CJEU Text Corpus"
+subtitle: ""
+author: "Michal Ovádek"
+institute: "University College London"
+format: revealjs
+editor: visual
+---
+
+## Where are the texts?
+
+We start with a simple desire: to read all EU court decisions.
+
+. . .
+
+Logically, we navigate to the official websites containing these decisions: Curia and Eur-Lex.
+
+. . .
+
+What do we find?
+
+```{r prelims}
+# library
+library(tidyverse)
+
+# seed
+set.seed(874112)
+```
+
+## Comparison of Curia and Eur-Lex
+
+![](elx_cur_en_fr_year.png){fig-align="center"}
+
+## Digitizing older documents
+
+Eur-Lex gives us the impression that it covers older documents comprehensively.
+
+. . .
+
+Not exactly:
+
+-   most exist only in capitalized form
+-   facts and arguments (report for the hearing) are missing
+
+. . .
+
+We combine state-of-the-art optical character recognition technology with manual labour to complete the dataset. You can [contribute](https://iuropa.pol.gu.se/CJEU-database/CJEU-text-corpus/text-editor).
+
+## Work-in-progress manual validation
+
+![](elx_ocr_en_fr_year.png)
+
+## The first complete text corpus
+
+We locate all texts, including AG opinions, regardless of format and source and combine them into a single text corpus.
+
+. . .
+
+Our dataset is at the paragraph level and augmented with variables that facilitate analysis.
+
+. . .
+
+Both English and French versions are included where available.
+
+## Cleaning and formatting
+
+The publishing quality of CJEU texts varies by year, source and importance of the case.
+
+. . .
+
+We take many steps to correct formatting errors to deliver a clean plain text database at the paragraph level:
+
+-   removal of HTML code
+-   end-of-line concatenation
+-   section and paragraph type identification
+-   non-invasive spellchecking
+-   ad-hoc manual corrections and validation
+
+## Summary of the CJEU Text Corpus (I)
+
+More paragraphs, more rulings, higher quality.
+
+| Corpus     | French      | English     |
+|------------|-------------|-------------|
+| **IUROPA** | **5361847** | **4076801** |
+| Curia      | 4412701     | 3235431     |
+| Eur-Lex    | 4104692     | 3647461     |
+
+::: aside
+Number of paragraphs in the corpus
+:::
+
+## Summary of the CJEU Text Corpus (II)
+
+| Corpus     | French    | English   |
+|------------|-----------|-----------|
+| **IUROPA** | **44837** | **35295** |
+| Curia      | 34234     | 22064     |
+| Eur-Lex    | 34442     | 31510     |
+
+::: aside
+Number of unique documents in the corpus
+:::
+
+------------------------------------------------------------------------
+
+![](final_en_fr_year.png)
+
+------------------------------------------------------------------------
+
+![](docs_n_paras_month.png)
+
+------------------------------------------------------------------------
+
+![](paras_mean_para_nchar_month.png)
+
+## Text as data
+
+Law, including case law, is text. We can apply text analytical techniques to learn more about it.
+
+. . .
+
+When working with text as data we first need to construct a numerical representation of the text.
+
+. . .
+
+The two main ways are bag of words (BoW) and embeddings.
+
+## Bag of words (I)
+
+The standard way of representing text numerically is to simply count the number of words (or other tokens) across our documents, while disregarding their order.
+
+## Bag of words (II)
+
+Consider these two sentences:
+
+1.  Who let the dogs out, who, who.
+2.  The dogs were let out by someone, but I do not know who.
+
+```{r bowexample, echo = FALSE}
+# example sentences
+example_text <- data.frame(id = c("sentence1", "sentence2"),
+                           text = c("Who let the dogs out, who, who.",
+                                    "The dogs were let out, but who let them out?"))
+
+# tokenize
+txt_split <- purrr::map(example_text, ~str_split(., " |[:punct:]"))
+
+# build vocabulary
+vocab <- unique(c(unlist(txt_split$text[1]), unlist(txt_split$text[2])))
+vocab <- sort(vocab[vocab!=""])
+
+# count tokens
+doc1 <- table(txt_split$text[1]) |> as.data.frame()
+doc2 <- table(txt_split$text[2]) |> as.data.frame()
+
+# document-term matrix
+txt_tbl <- data.frame(
+  vocab = vocab
+) |> 
+  left_join(doc1, by = c("vocab"="Var1")) |> 
+  left_join(doc2, by = c("vocab"="Var1")) |> 
+  rename(sent1 = Freq.x,
+         sent2 = Freq.y) |> 
+  mutate(across(.cols = c(sent1, sent2), .fns = ~ifelse(is.na(.), 0L, .)))
+
+txt_tbl_t <- txt_tbl |> t() |> as.data.frame()
+
+colnames(txt_tbl_t) <- txt_tbl_t[1,]
+txt_tbl_t <- txt_tbl_t[-1,]
+
+# calculate cosine sim
+txt_ex1_cos <- round(coop::cosine(as.numeric(txt_tbl_t[1,]), as.numeric(txt_tbl_t[2,])),3)
+
+# calculate sparsity
+txt_ex1_sparse <- as.numeric(as.matrix(txt_tbl_t)) |> 
+  matrix(ncol = length(vocab)) |> 
+  coop::sparsity()
+
+rmarkdown::paged_table(
+  txt_tbl_t
+)
+```
+
+This is also known as a ***document-term*** matrix.
+
+## Similarity
+
+We need some way of comparing documents represented numerically. The most common measure is ***cosine similarity***:
+
+$cos(\pmb x, \pmb y) = \frac {\pmb x \cdot \pmb y}{||\pmb x|| \; ||\pmb y||}$
+
+(dot product of vectors x and y divided by the product of their lengths).
+
+The denominator ensures that cosine similarity [does not depend on the magnitudes]{.underline} of the vectors, which is usually a very desirable property (texts with different lengths).
+
+Cosine similarity of our two sentences: `r txt_ex1_cos`
+
+## Sparsity
+
+It is also useful to consider the issue of sparsity. Sparsity is the proportion of zeros in a given matrix.
+
+Sparsity of our two-sentence matrix: `r txt_ex1_sparse`
+
+Matrices with few to no zeros are considered *dense*, matrices with many zeros *sparse*.
+
+## Bag of words (III)
+
+Text pre-processing and token selection matters.
+
+```{r bowexamplepreproc, echo = FALSE}
+example_text <- example_text |> mutate(text = str_to_lower(text))
+
+txt_split <- purrr::map(example_text, ~str_split(., " |[:punct:]"))
+
+vocab <- unique(c(unlist(txt_split$text[1]), unlist(txt_split$text[2])))
+vocab <- sort(vocab[vocab!=""])
+
+doc1 <- table(txt_split$text[1]) |> as.data.frame()
+doc2 <- table(txt_split$text[2]) |> as.data.frame()
+
+txt_tbl <- data.frame(
+  vocab = vocab
+) |> 
+  left_join(doc1, by = c("vocab"="Var1")) |> 
+  left_join(doc2, by = c("vocab"="Var1")) |> 
+  rename(sent1 = Freq.x,
+         sent2 = Freq.y) |> 
+  mutate(across(.cols = c(sent1, sent2), .fns = ~ifelse(is.na(.), 0L, .)))
+
+txt_tbl_t <- txt_tbl |> t() |> as.data.frame()
+
+colnames(txt_tbl_t) <- txt_tbl_t[1,]
+txt_tbl_t <- txt_tbl_t[-1,]
+
+# calculate cosine sim
+txt_ex2_cos <- round(coop::cosine(as.numeric(txt_tbl_t[1,]), as.numeric(txt_tbl_t[2,])),3)
+
+# calculate sparsity
+txt_ex2_sparse <- as.numeric(as.matrix(txt_tbl_t)) |> 
+  matrix(ncol = length(vocab)) |> 
+  coop::sparsity()
+
+rmarkdown::paged_table(
+  txt_tbl_t
+)
+```
+
+Cosine similarity with more pre-processing: `r txt_ex2_cos`
+
+Sparsity with more pre-processing: `r txt_ex2_sparse`
+
+## Embeddings
+
+A richer and more efficient way to represent texts numerically is using embeddings.
+
+. . .
+
+Embeddings project tokens (words) onto an N-dimensional space using the co-occurrence of words in a given window. Words with a similar meaning are likely to appear closer together in the embedding space.
+
+## Embeddings (II)
+
+Embeddings produce dense matrices (sparsity = 0).
+
+```{r embeddingexample, echo=FALSE}
+embs <- matrix(runif(4*length(colnames(txt_tbl_t)), min = -3, max = 3),
+               nrow=length(colnames(txt_tbl_t))) |> 
+  as.data.frame()
+
+rownames(embs) <- colnames(txt_tbl_t)
+colnames(embs) <- c("dim1","dim2","dim3","dim4")
+
+embs_short <- embs |> slice(1:5)
+
+rmarkdown::paged_table(embs_short)
+```
+
+## Embeddings (III)
+
+We can extend the idea of *word* embeddings to sentences, paragraphs and larger units of text.
+
+. . . 
+
+We can either average (or otherwise mathematically combine) the word vectors in a given document
+
+. . . 
+
+or train document vectors on the synthetic task of predicting document words in a shallow neural network setting.
+
+------------------------------------------------------------------------
+
+```{r embedfig, echo=FALSE}
+
+knitr::include_graphics(path = "fig_embed.jpg")
+
+```
